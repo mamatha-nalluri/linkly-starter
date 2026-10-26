@@ -1,0 +1,8 @@
+secrets/
+proxy/certs/
+backups/
+__pycache__/
+*.pyc
+.venv/
+logs/
+reports/
