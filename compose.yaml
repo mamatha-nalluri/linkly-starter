@@ -1,0 +1,137 @@
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: linkly
+      POSTGRES_USER: linkly
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U linkly -d linkly"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - backend
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - backend
+
+  api:
+    build:
+      context: ./api
+    image: linkly-api:dev
+    environment:
+      DB_HOST: postgres
+      DB_NAME: linkly
+      DB_USER: linkly
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_HOST: redis
+      LOG_FILE: "-"
+      LOG_FORMAT: json
+    secrets:
+      - db_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - frontend
+      - backend
+
+  worker:
+    build:
+      context: ./worker
+    image: linkly-worker:dev
+    environment:
+      DB_HOST: postgres
+      DB_NAME: linkly
+      DB_USER: linkly
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_HOST: redis
+      REPORT_DIR: /app/reports
+      REPORT_INTERVAL: "86400"
+      WEBHOOK_URL: https://httpbin.org/post
+      HEARTBEAT_FILE: /tmp/worker-heartbeat
+    secrets:
+      - db_password
+    volumes:
+      - worker_reports:/app/reports
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - backend
+
+  proxy:
+    build:
+      context: ./proxy
+    image: linkly-proxy:dev
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    volumes:
+      - ./proxy/certs/tls.crt:/etc/nginx/certs/tls.crt:ro
+      - ./proxy/certs/tls.key:/etc/nginx/certs/tls.key:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:8080/healthz"
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - frontend
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+
+volumes:
+  postgres_data:
+  worker_reports:
+
+networks:
+  frontend:
+  backend:

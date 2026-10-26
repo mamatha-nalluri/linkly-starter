@@ -1,61 +1,255 @@
-# Linkly: starter app for the Docker capstone
+# Linkly — Docker Capstone
 
-Linkly is a URL shortener with click analytics. This repository contains the application only.
-Your job is to containerize it, segment it across Docker networks, harden it and ship it.
-Do not change the application's features. Change only how it is configured and run.
+Linkly is a URL shortener with click analytics. This project containerizes the existing application using Docker and Docker Compose, separates services across Docker networks, manages the database password using a file-based secret, and adds health checks and persistent storage.
 
-## Components
+The application features remain unchanged.
 
-| Path | What it is |
-| --- | --- |
-| `api/app.py` | Flask API, served by Gunicorn |
-| `api/healthcheck.py` | Exits 0 if `GET /health` returns 200 (standard library only) |
-| `worker/worker.py` | Moves clicks from Redis to Postgres, writes a CSV report, posts a summary to a webhook |
-| `worker/healthcheck.py` | Exits 0 if the worker's heartbeat file is newer than 30 seconds |
-| `proxy/default.conf` | nginx config: HTTP on 8080 redirects to HTTPS on 8443 (except `/healthz`), forwards to `api:5000` |
-| `proxy/gen-cert.sh` | Creates a self-signed certificate in `proxy/certs/` |
+## Architecture
 
-## API endpoints
+The application consists of five services:
 
-| Method and path | Purpose |
-| --- | --- |
-| `POST /links` with `{"url": "https://..."}` | Create a short link, returns `{"code": ...}` |
-| `GET /<code>` | Redirect to the original URL and record a click |
-| `GET /stats/<code>` | Number of clicks stored for a code |
-| `GET /slow?seconds=N` | Sleeps N seconds (max 30), for testing graceful shutdown |
-| `GET /health` | 200 if Postgres and Redis are reachable, else 503 |
+| Service | Responsibility |
+|---|---|
+| `proxy` | Nginx reverse proxy; HTTP and HTTPS entry points |
+| `api` | Flask API served by Gunicorn |
+| `worker` | Processes click events, writes CSV reports, and posts webhook summaries |
+| `postgres` | Stores links and click records |
+| `redis` | Queues click events for background processing |
 
-## Configuration (environment variables)
+### Request flow
 
-| Variable | Used by | Default | Meaning |
-| --- | --- | --- | --- |
-| `DB_HOST` | api, worker | `localhost` | Postgres host |
-| `DB_NAME` | api, worker | `linkly` | Database name |
-| `DB_USER` | api, worker | `linkly` | Database user |
-| `DB_PASSWORD` | api, worker | empty | Database password |
-| `DB_PASSWORD_FILE` | api, worker | unset | Path to a file holding the password; overrides `DB_PASSWORD` |
-| `REDIS_HOST` | api, worker | `localhost` | Redis host (port 6379) |
-| `LOG_FILE` | api | `logs/api.log` | Log file path; `-` writes to stdout |
-| `LOG_FORMAT` | api | `text` | `text` or `json` |
-| `REPORT_DIR` | worker | `reports` | Folder for CSV reports |
-| `REPORT_INTERVAL` | worker | `86400` | Seconds between reports; the first report is written at start |
-| `WEBHOOK_URL` | worker | `https://httpbin.org/post` | Where the report summary is posted; empty disables it |
-| `HEARTBEAT_FILE` | worker | `/tmp/worker-heartbeat` | Heartbeat file read by `worker/healthcheck.py` |
+1. A client sends a request to Nginx.
+2. Nginx forwards HTTPS requests to the API.
+3. The API creates short links and records click events.
+4. Redis queues click events for asynchronous processing.
+5. The worker reads events from Redis and stores them in PostgreSQL.
+6. The worker periodically generates CSV reports and sends webhook summaries.
 
-The api creates its tables on start, so Postgres must be reachable before the api starts.
+### Docker networking
 
-## How the developer ran it on a laptop
+- `frontend`: connects the proxy to the API.
+- `backend`: connects the API, PostgreSQL, Redis, and worker.
+- PostgreSQL and Redis are not published directly to the host.
 
-```
-pip install -r api/requirements.txt -r worker/requirements.txt
-cd api && DB_PASSWORD=devpass gunicorn app:app
-cd worker && DB_PASSWORD=devpass python worker.py
+### Persistent storage
+
+- `postgres_data`: PostgreSQL database data.
+- `worker_reports`: generated CSV reports.
+
+## Prerequisites
+
+Install Docker Desktop and ensure Docker Compose is available.
+
+Verify the installation:
+
+```bash
+docker --version
+docker compose version
+docker info
 ```
 
-## Quick test once the stack is up
+## Project structure
 
+```text
+linkly-starter/
+├── api/
+│   ├── Dockerfile
+│   ├── app.py
+│   ├── healthcheck.py
+│   └── requirements.txt
+├── worker/
+│   ├── Dockerfile
+│   ├── worker.py
+│   ├── healthcheck.py
+│   └── requirements.txt
+├── proxy/
+│   ├── Dockerfile
+│   ├── default.conf
+│   ├── gen-cert.sh
+│   └── certs/
+├── secrets/
+│   └── db_password
+├── compose.yaml
+└── README.md
 ```
-curl -sk -X POST https://localhost/links -H 'Content-Type: application/json' -d '{"url":"https://example.com"}'
-curl -sk -o /dev/null -w '%{http_code}\n' https://localhost/<code>
-curl -sk https://localhost/stats/<code>
+
+Generated certificates and database secrets are local development files and must not be committed to Git.
+
+## Configuration and setup
+
+Run these commands from the repository root.
+
+### 1. Generate the local TLS certificate
+
+```bash
+chmod +x proxy/gen-cert.sh
+./proxy/gen-cert.sh
 ```
+
+The script creates the certificate and private key under `proxy/certs/`.
+
+The certificate is self-signed and intended for local development only.
+
+### 2. Generate a database password
+
+```bash
+mkdir -p secrets
+umask 077
+openssl rand -hex 24 > secrets/db_password
+chmod 600 secrets/db_password
+```
+
+Do not commit or share this password.
+
+### 3. Validate the Compose configuration
+
+```bash
+docker compose config --quiet
+docker compose config --services
+```
+
+### 4. Build and start the application
+
+```bash
+docker compose up --build -d
+```
+
+### 5. Verify container health
+
+```bash
+docker compose ps
+```
+
+Wait until the services with health checks report `healthy`.
+
+## Local testing
+
+The HTTPS listener is published on port `8443`, and the HTTP listener is published on port `8080`.
+
+The following commands use `curl -k` because the local TLS certificate is self-signed. Do not use this option as a substitute for certificate validation in production.
+
+### 1. Check the proxy
+
+```bash
+curl -i http://localhost:8080/healthz
+```
+
+Expected result: HTTP `200 OK`.
+
+### 2. Check API health
+
+```bash
+curl -k -i https://localhost:8443/health
+```
+
+Expected result: HTTP `200 OK`, with PostgreSQL and Redis reporting healthy connections.
+
+### 3. Create a short link
+
+```bash
+curl -k -i -X POST https://localhost:8443/links \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com"}'
+```
+
+Example response:
+
+```json
+{
+  "code": "K8Q1X0",
+  "url": "https://example.com"
+}
+```
+
+The generated code will vary.
+
+### 4. Test the redirect
+
+Replace `CODE` with the code returned by the API.
+
+```bash
+curl -k -i https://localhost:8443/CODE
+```
+
+Expected result: HTTP `302 FOUND`, with a `Location` header pointing to the original URL.
+
+### 5. Check click statistics
+
+```bash
+curl -k -i https://localhost:8443/stats/CODE
+```
+
+The response contains the short code and its click count.
+
+### 6. Simulate multiple visits
+
+```bash
+for i in 1 2 3; do
+  curl -k -s -o /dev/null \
+    -w "Visitor $i: HTTP %{http_code}\n" \
+    https://localhost:8443/CODE
+done
+```
+
+Query the statistics endpoint again to check whether the clicks were recorded.
+
+### 7. Inspect worker processing
+
+```bash
+docker compose logs --tail=50 worker
+```
+
+Look for messages indicating that click events were stored.
+
+## Operations and troubleshooting
+
+### View logs
+
+```bash
+docker compose logs --tail=100
+docker compose logs -f api
+docker compose logs -f worker
+docker compose logs -f proxy
+```
+
+Press `Ctrl+C` to stop following logs.
+
+### Restart services
+
+```bash
+docker compose restart api worker
+docker compose ps
+```
+
+### Rebuild after configuration or Dockerfile changes
+
+```bash
+docker compose up --build -d
+```
+
+### Stop the stack
+
+```bash
+docker compose down
+```
+
+The named database and report volumes are retained when the stack is stopped this way.
+
+**Warning:** `docker compose down -v` removes Compose-managed volumes and can delete stored database data and reports.
+
+## Security considerations
+
+- The database password is provided using a file-based secret.
+- The `secrets/` and `proxy/certs/` directories must remain excluded from Git.
+- The proxy is the only service publishing application ports to the host.
+- PostgreSQL and Redis are accessible through internal Docker networks rather than published host ports.
+- The local TLS certificate is self-signed and must be replaced with a trusted certificate for a public deployment.
+- Before public deployment, configure a domain, production TLS, suitable firewall rules, secure secret management, and appropriate resource limits.
+
+## Scope and limitations
+
+This repository is a local Docker capstone environment. It is not automatically a public URL-shortening service.
+
+The current local short URLs are accessible from the host running Docker. Making links accessible to other users requires a suitable deployment and public domain.
+
+The original application endpoints and behavior are unchanged.
