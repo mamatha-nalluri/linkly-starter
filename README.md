@@ -59,4 +59,3 @@ curl -sk -X POST https://localhost/links -H 'Content-Type: application/json' -d 
 curl -sk -o /dev/null -w '%{http_code}\n' https://localhost/<code>
 curl -sk https://localhost/stats/<code>
 ```
-# linkly-starter tarunasthana@IN-FVFGK2EPQ05N
