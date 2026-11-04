@@ -189,8 +189,12 @@ The starter worker defaults to an external webhook endpoint. The required topolo
 After pushing the images, scan both pushed tags:
 
 ```bash
-docker run --rm aquasec/trivy:0.56.2 image --severity CRITICAL --ignore-unfixed --exit-code 1 YOUR_DOCKERHUB_USERNAME/linkly-api:SHORT_SHA
-docker run --rm aquasec/trivy:0.56.2 image --severity CRITICAL --ignore-unfixed --exit-code 1 YOUR_DOCKERHUB_USERNAME/linkly-worker:SHORT_SHA
+docker run --rm --cap-drop ALL --security-opt no-new-privileges --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=128m --tmpfs /root/.cache:rw,noexec,nosuid,size=256m \
+  --memory 1g --cpus 1.0 aquasec/trivy:0.56.2 image --severity CRITICAL --ignore-unfixed --exit-code 1 YOUR_DOCKERHUB_USERNAME/linkly-api:SHORT_SHA
+docker run --rm --cap-drop ALL --security-opt no-new-privileges --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=128m --tmpfs /root/.cache:rw,noexec,nosuid,size=256m \
+  --memory 1g --cpus 1.0 aquasec/trivy:0.56.2 image --severity CRITICAL --ignore-unfixed --exit-code 1 YOUR_DOCKERHUB_USERNAME/linkly-worker:SHORT_SHA
 ```
 
 Acceptance target: zero fixable CRITICAL vulnerabilities. Record actual output; do not claim a pass until both commands exit 0.
