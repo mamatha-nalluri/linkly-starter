@@ -1,16 +1,10 @@
-FROM python:3.12-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
-
+FROM python:3.12-slim-bookworm
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
-
-COPY requirements.txt .
-
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app.py healthcheck.py ./
-
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --no-compile -r requirements.txt && groupadd --gid 10001 app && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin app && mkdir -p /run/secrets
+COPY --chown=10001:10001 app.py healthcheck.py ./
+USER 10001:10001
 EXPOSE 5000
-
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
+HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=5 CMD ["python","healthcheck.py"]
+CMD ["gunicorn","--bind","0.0.0.0:5000","--worker-tmp-dir","/tmp","app:app"]

@@ -1,0 +1,11 @@
+**/__pycache__
+**/*.py[cod]
+.git
+.gitignore
+.DS_Store
+.venv
+venv
+secrets
+backups
+proxy/certs
+docs/evidence

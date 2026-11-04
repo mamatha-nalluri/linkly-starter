@@ -1,255 +1,232 @@
-# Linkly — Docker Capstone
+# Linkly — Segmented Production Docker Stack
 
-Linkly is a URL shortener with click analytics. This project containerizes the existing application using Docker and Docker Compose, separates services across Docker networks, manages the database password using a file-based secret, and adds health checks and persistent storage.
+This capstone containerizes the provided Linkly URL shortener and click analytics service. The original application code remains unchanged. Runtime behavior is configured through Dockerfiles, environment variables, mounts and Docker CLI flags.
 
-The application features remain unchanged.
+**The capstone uses plain Docker CLI, not Docker Compose.**
 
 ## Architecture
 
-The application consists of five services:
-
-| Service | Responsibility |
-|---|---|
-| `proxy` | Nginx reverse proxy; HTTP and HTTPS entry points |
-| `api` | Flask API served by Gunicorn |
-| `worker` | Processes click events, writes CSV reports, and posts webhook summaries |
-| `postgres` | Stores links and click records |
-| `redis` | Queues click events for background processing |
-
-### Request flow
-
-1. A client sends a request to Nginx.
-2. Nginx forwards HTTPS requests to the API.
-3. The API creates short links and records click events.
-4. Redis queues click events for asynchronous processing.
-5. The worker reads events from Redis and stores them in PostgreSQL.
-6. The worker periodically generates CSV reports and sends webhook summaries.
-
-### Docker networking
-
-- `frontend`: connects the proxy to the API.
-- `backend`: connects the API, PostgreSQL, Redis, and worker.
-- PostgreSQL and Redis are not published directly to the host.
-
-### Persistent storage
-
-- `postgres_data`: PostgreSQL database data.
-- `worker_reports`: generated CSV reports.
-
-## Prerequisites
-
-Install Docker Desktop and ensure Docker Compose is available.
-
-Verify the installation:
-
-```bash
-docker --version
-docker compose version
-docker info
-```
-
-## Project structure
+Six services, three networks and three named volumes:
 
 ```text
-linkly-starter/
-├── api/
-│   ├── Dockerfile
-│   ├── app.py
-│   ├── healthcheck.py
-│   └── requirements.txt
-├── worker/
-│   ├── Dockerfile
-│   ├── worker.py
-│   ├── healthcheck.py
-│   └── requirements.txt
-├── proxy/
-│   ├── Dockerfile
-│   ├── default.conf
-│   ├── gen-cert.sh
-│   └── certs/
-├── secrets/
-│   └── db_password
-├── compose.yaml
-└── README.md
+Internet
+   |
+Host ports 80 / 443
+   |
+[proxy: nginx unprivileged] -- dmz -- [api: Flask/Gunicorn]
+                                         |
+                                      internal
+                           +-------------+-------------+
+                           |             |             |
+                        [worker]       [cache]         [db]
+                                     Redis AOF      PostgreSQL
+                                                        |
+                                                      admin
+                                                        |
+                                                  [backup job]
 ```
 
-Generated certificates and database secrets are local development files and must not be committed to Git.
+| Service | Image | Networks | Published ports | Storage |
+|---|---|---|---|---|
+| proxy | nginxinc/nginx-unprivileged:1.27-alpine | dmz | 80:8080, 443:8443 | none |
+| api | built from python:3.12-slim-bookworm | dmz, internal | none | none |
+| worker | built from python:3.12-slim-bookworm | internal | none | reports |
+| cache | redis:7.4-alpine | internal | none | redisdata |
+| db | postgres:16-alpine | internal, admin | none | pgdata |
+| backup job | postgres:16-alpine (one-shot) | admin | none | ./backups bind mount |
 
-## Configuration and setup
+Only API is dual-homed across dmz and internal. The database is dual-homed across internal and admin. Both internal and admin are created with Docker's `--internal` option.
 
-Run these commands from the repository root.
+### Why is API reachable from internal?
 
-### 1. Generate the local TLS certificate
+The API needs PostgreSQL and Redis on internal and receives proxy traffic on dmz. Because worker, cache and database share internal with API, they can also reach the API's listening port. This is the explicit connectivity trade-off of the required topology. A stricter production design would add host firewall policy or a more restrictive service boundary.
+
+## Required reachability matrix
+
+`scripts/netcheck.sh` tests live container network namespaces, prints expected versus actual and exits non-zero on a mismatch.
+
+| From / To | api:5000 | db:5432 | cache:6379 | Internet 1.1.1.1:443 |
+|---|---|---|---|---|
+| proxy | Allowed | Blocked | Blocked | Allowed |
+| api | — | Allowed | Allowed | Allowed |
+| worker | Allowed | Allowed | Allowed | Blocked |
+| cache | Allowed | Allowed | — | Blocked |
+| db | Allowed | — | Allowed | Blocked |
+| backup job | Blocked | Allowed | Blocked | Blocked |
+
+## Exact image tags
+
+- `python:3.12-slim-bookworm`
+- `nginxinc/nginx-unprivileged:1.27-alpine`
+- `postgres:16-alpine`
+- `redis:7.4-alpine`
+- `busybox:1.36`
+- `aquasec/trivy:0.56.2`
+
+Never use `:latest`.
+
+## Prerequisites and setup
+
+Use a Linux Docker host/VM with Docker Engine, Bash, Git and OpenSSL. Docker Desktop on macOS is suitable because it runs Docker Engine in a Linux VM. The stack binds host ports 80 and 443; ensure they are available.
 
 ```bash
-chmod +x proxy/gen-cert.sh
-./proxy/gen-cert.sh
-```
-
-The script creates the certificate and private key under `proxy/certs/`.
-
-The certificate is self-signed and intended for local development only.
-
-### 2. Generate a database password
-
-```bash
-mkdir -p secrets
+chmod +x scripts/*.sh proxy/gen-cert.sh
 umask 077
+mkdir -p secrets
+chmod 700 secrets
 openssl rand -hex 24 > secrets/db_password
-chmod 600 secrets/db_password
+chmod 444 secrets/db_password
+./proxy/gen-cert.sh
+bash scripts/up.sh
 ```
 
-Do not commit or share this password.
+The password and self-signed TLS key are local-only. Keep `secrets/` private (mode 0700); the password file is mode 0444 so the non-root container UIDs can read its read-only mount. `secrets/`, `proxy/certs/`, and generated backups are gitignored. Never commit them.
 
-### 3. Validate the Compose configuration
+The startup script builds the API and worker images, then runs the official `nginxinc/nginx-unprivileged:1.27-alpine` image directly for the proxy. It creates the exact networks and volumes, initializes named-volume ownership, starts services in dependency order, waits for health and publishes only proxy ports. API and worker images are tagged with the short Git SHA. To push these two images to Docker Hub:
 
 ```bash
-docker compose config --quiet
-docker compose config --services
+docker login
+DOCKERHUB_USER=YOUR_DOCKERHUB_USERNAME PUSH_IMAGES=true bash scripts/up.sh
 ```
 
-### 4. Build and start the application
+Replace the placeholder with your Docker Hub username. The script pushes `linkly-api:<short-sha>` and `linkly-worker:<short-sha>` to your public Docker Hub repositories. Add the real image URLs after a successful push.
+
+## Application endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/health` | API, PostgreSQL and Redis health |
+| POST | `/links` | Create a short link; JSON body: `{"url":"https://example.com"}` |
+| GET | `/<code>` | Redirect to the original URL and enqueue a click |
+| GET | `/stats/<code>` | Read the click count persisted by the worker |
+| GET | `/slow?seconds=5` | Starter diagnostic delay endpoint |
+| GET | `/healthz` | Nginx liveness endpoint (HTTP listener) |
+
+## Runtime environment variables
+
+The scripts set these values explicitly; the application source remains unchanged.
+
+| Service | Variable | Value / meaning |
+|---|---|---|
+| API | `DB_HOST` | `linkly-db` |
+| API | `DB_NAME` | `linkly` |
+| API | `DB_USER` | `linkly` |
+| API | `DB_PASSWORD_FILE` | `/run/secrets/db_password` |
+| API | `REDIS_HOST` | `linkly-cache` |
+| API | `LOG_FILE` | `-` (stdout; compatible with read-only root filesystem) |
+| API | `LOG_FORMAT` | `json` |
+| Worker | `DB_HOST`, `DB_NAME`, `DB_USER` | `linkly-db`, `linkly`, `linkly` |
+| Worker | `DB_PASSWORD_FILE` | `/run/secrets/db_password` |
+| Worker | `REDIS_HOST` | `linkly-cache` |
+| Worker | `REPORT_DIR` | `/app/reports` |
+| Worker | `REPORT_INTERVAL` | `86400` seconds |
+| Worker | `WEBHOOK_URL` | Empty to honor the worker's required blocked-Internet policy |
+| Worker | `HEARTBEAT_FILE` | `/tmp/worker-heartbeat` |
+| PostgreSQL | `POSTGRES_DB`, `POSTGRES_USER` | `linkly`, `linkly` |
+| PostgreSQL | `POSTGRES_PASSWORD_FILE` | `/run/secrets/db_password` |
+
+The code also supports fallback `DB_PASSWORD` variables, but this deployment deliberately does not set them. The password is supplied only through the read-only file mount. Redis and Nginx require no custom environment variables in this stack.
+
+## Laptop / Docker Desktop run notes
+
+On a MacBook, start Docker Desktop and run the setup commands from the repository root in Terminal. The Docker Engine runs in Docker Desktop's Linux VM. The proxy is reachable from the Mac at `http://localhost/healthz` and `https://localhost/`; local HTTPS uses the generated self-signed certificate. The host ports are 80 and 443 (not 8080 and 8443), matching the capstone requirement. No Compose command is required.
+
+## Test the application
 
 ```bash
-docker compose up --build -d
-```
-
-### 5. Verify container health
-
-```bash
-docker compose ps
-```
-
-Wait until the services with health checks report `healthy`.
-
-## Local testing
-
-The HTTPS listener is published on port `8443`, and the HTTP listener is published on port `8080`.
-
-The following commands use `curl -k` because the local TLS certificate is self-signed. Do not use this option as a substitute for certificate validation in production.
-
-### 1. Check the proxy
-
-```bash
-curl -i http://localhost:8080/healthz
-```
-
-Expected result: HTTP `200 OK`.
-
-### 2. Check API health
-
-```bash
-curl -k -i https://localhost:8443/health
-```
-
-Expected result: HTTP `200 OK`, with PostgreSQL and Redis reporting healthy connections.
-
-### 3. Create a short link
-
-```bash
-curl -k -i -X POST https://localhost:8443/links \
+curl -i http://localhost/healthz
+curl -k -i https://localhost/health
+curl -k -i -X POST https://localhost/links \
   -H 'Content-Type: application/json' \
   -d '{"url":"https://example.com"}'
 ```
 
-Example response:
-
-```json
-{
-  "code": "K8Q1X0",
-  "url": "https://example.com"
-}
-```
-
-The generated code will vary.
-
-### 4. Test the redirect
-
-Replace `CODE` with the code returned by the API.
+Use the returned code in:
 
 ```bash
-curl -k -i https://localhost:8443/CODE
+curl -k -i https://localhost/CODE
+curl -k -i https://localhost/stats/CODE
 ```
 
-Expected result: HTTP `302 FOUND`, with a `Location` header pointing to the original URL.
+Expected: health returns 200, link creation 201, redirect 302, and stats reports the asynchronously persisted click count. The local TLS certificate is self-signed; `curl -k` is for local testing only.
 
-### 5. Check click statistics
+## Network proof
 
 ```bash
-curl -k -i https://localhost:8443/stats/CODE
+bash scripts/netcheck.sh
 ```
 
-The response contains the short code and its click count.
+It uses disposable `busybox:1.36` sidecars sharing each service's network namespace. A throwaway backup-role sidecar tests admin-only access. The script must exit 0 for a pass.
 
-### 6. Simulate multiple visits
+## Backup and persistence
 
 ```bash
-for i in 1 2 3; do
-  curl -k -s -o /dev/null \
-    -w "Visitor $i: HTTP %{http_code}\n" \
-    https://localhost:8443/CODE
-done
+bash scripts/backup.sh
+ls -lh backups/
+gzip -t backups/linkly-*.sql.gz
+zcat backups/linkly-TIMESTAMP.sql.gz | grep 'YOUR_SHORT_CODE'
 ```
 
-Query the statistics endpoint again to check whether the clicks were recorded.
+The backup job uses a temporary PostgreSQL client on admin only and writes a timestamped compressed SQL dump. To test persistence, record a known code, run `bash scripts/down.sh`, then `bash scripts/up.sh` and query its stats again. The down script removes containers and networks but retains `pgdata`, `redisdata` and `reports`.
 
-### 7. Inspect worker processing
+## Security controls
+
+- API and worker use fixed UID/GID 10001; proxy uses unprivileged UID 101; database and cache use their image service users.
+- Containers drop all capabilities, enable `no-new-privileges`, use read-only root filesystems and bounded tmpfs mounts.
+- CPU and memory limits are configured for long-running services and one-shot jobs.
+- Database password is mounted read-only at `/run/secrets/db_password` and passed through `DB_PASSWORD_FILE` / `POSTGRES_PASSWORD_FILE`; it is not embedded in image layers or container environment values.
+- The self-signed development TLS key is made readable by the unprivileged Nginx UID before the read-only certificate-directory mount. Keep `proxy/certs/` private and never commit the key; use a proper certificate/secret-management mechanism in production.
+- Every long-running service has a health check; startup waits for dependencies.
+- No privileged containers, host networking or Docker socket mounts.
+- Redis AOF and PostgreSQL data use named volumes.
+
+### Webhook egress trade-off
+
+The starter worker defaults to an external webhook endpoint. The required topology explicitly blocks worker Internet access. To keep worker internal-only and avoid crashing on its first report, startup sets `WEBHOOK_URL=`. CSV report generation and click processing remain enabled, but external webhook delivery is disabled. See incident 04. This does not claim webhook delivery succeeds.
+
+## Vulnerability scan
+
+After pushing the images, scan both pushed tags:
 
 ```bash
-docker compose logs --tail=50 worker
+docker run --rm --cap-drop ALL --security-opt no-new-privileges --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=128m --tmpfs /root/.cache:rw,noexec,nosuid,size=256m \
+  --memory 1g --cpus 1.0 aquasec/trivy:0.56.2 image --severity CRITICAL --ignore-unfixed --exit-code 1 YOUR_DOCKERHUB_USERNAME/linkly-api:SHORT_SHA
+docker run --rm --cap-drop ALL --security-opt no-new-privileges --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=128m --tmpfs /root/.cache:rw,noexec,nosuid,size=256m \
+  --memory 1g --cpus 1.0 aquasec/trivy:0.56.2 image --severity CRITICAL --ignore-unfixed --exit-code 1 YOUR_DOCKERHUB_USERNAME/linkly-worker:SHORT_SHA
 ```
 
-Look for messages indicating that click events were stored.
+Acceptance target: zero fixable CRITICAL vulnerabilities. Record actual output; do not claim a pass until both commands exit 0.
 
-## Operations and troubleshooting
+## Incidents and evidence
 
-### View logs
+Six incident analyses are in `docs/incidents/`: missing shared network/DNS, proxy 502, database readiness race, worker webhook egress, API read-only filesystem logging, and reports-volume ownership. Each write-up describes symptom, reproduction, root cause and fix.
 
-```bash
-docker compose logs --tail=100
-docker compose logs -f api
-docker compose logs -f worker
-docker compose logs -f proxy
+The evidence directory contains capture instructions. The capstone requires genuine output from a real Docker host; no fabricated evidence is committed. Capture at minimum:
+
+- Fresh clone to all healthy services in 10 minutes or less.
+- `netcheck.sh` exit 0 and matching matrix.
+- Network membership and published-port inspection.
+- Link creation, redirect and stats output.
+- API image size at most 200 MB.
+- Non-root API/worker process output.
+- Container security inspection and proof secret is absent from Config.Env.
+- Trivy scans with zero fixable CRITICAL findings.
+- Link count before/after down/up.
+- SQL gzip backup containing a known link code.
+
+## Repository layout
+
+```text
+.
+├── .dockerignore
+├── README.md
+├── api/                 # original app + Dockerfile
+├── worker/              # original worker + Dockerfile
+├── proxy/               # nginx config + TLS generator (official image; no custom Dockerfile)
+├── scripts/             # up, down, backup and netcheck
+└── docs/
+    ├── incidents/       # six incident reports
+    └── evidence/        # real command output
 ```
-
-Press `Ctrl+C` to stop following logs.
-
-### Restart services
-
-```bash
-docker compose restart api worker
-docker compose ps
-```
-
-### Rebuild after configuration or Dockerfile changes
-
-```bash
-docker compose up --build -d
-```
-
-### Stop the stack
-
-```bash
-docker compose down
-```
-
-The named database and report volumes are retained when the stack is stopped this way.
-
-**Warning:** `docker compose down -v` removes Compose-managed volumes and can delete stored database data and reports.
-
-## Security considerations
-
-- The database password is provided using a file-based secret.
-- The `secrets/` and `proxy/certs/` directories must remain excluded from Git.
-- The proxy is the only service publishing application ports to the host.
-- PostgreSQL and Redis are accessible through internal Docker networks rather than published host ports.
-- The local TLS certificate is self-signed and must be replaced with a trusted certificate for a public deployment.
-- Before public deployment, configure a domain, production TLS, suitable firewall rules, secure secret management, and appropriate resource limits.
-
-## Scope and limitations
-
-This repository is a local Docker capstone environment. It is not automatically a public URL-shortening service.
-
-The current local short URLs are accessible from the host running Docker. Making links accessible to other users requires a suitable deployment and public domain.
-
-The original application endpoints and behavior are unchanged.
