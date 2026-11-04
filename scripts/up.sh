@@ -41,7 +41,7 @@ docker run --rm --user 0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-pr
 
 docker run -d --name linkly-db --network internal --network-alias db --user 70:70 --restart unless-stopped \
   --cap-drop ALL --security-opt no-new-privileges --read-only \
-  --tmpfs /tmp:rw,noexec,nosuid,size=64m --tmpfs /var/run/postgresql:rw,noexec,nosuid,size=16m,uid=70,gid=70,mode=3775 \
+  --tmpfs /tmp:rw,noexec,nosuid,size=64m --tmpfs /var/run/postgresql:rw,noexec,nosuid,size=16m,uid=70,gid=70,mode=3775 --tmpfs /run/secrets:rw,noexec,nosuid,size=1m \
   --memory 512m --cpus 1.0 -v pgdata:/var/lib/postgresql/data \
   --mount type=bind,src="$PASSWORD_FILE",dst=/run/secrets/db_password,readonly \
   -e POSTGRES_DB=linkly -e POSTGRES_USER=linkly -e POSTGRES_PASSWORD_FILE=/run/secrets/db_password \
