@@ -35,13 +35,13 @@ docker volume create redisdata >/dev/null
 docker volume create reports >/dev/null
 
 # Initialize persistent volume ownership with a short-lived helper.
-docker run --rm --user 0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges --memory 32m --cpus 0.25 -v pgdata:/v busybox:1.36 chown 70:70 /v
+docker run --rm --user 0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges --read-only --memory 32m --cpus 0.25 -v pgdata:/v busybox:1.36 chown 70:70 /v
 docker run --rm --user 0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges --memory 32m --cpus 0.25 -v redisdata:/v busybox:1.36 chown 999:999 /v
 docker run --rm --user 0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges --memory 32m --cpus 0.25 -v reports:/v busybox:1.36 chown 10001:10001 /v
 
 docker run -d --name linkly-db --network internal --network-alias db --user 70:70 --restart unless-stopped \
   --cap-drop ALL --security-opt no-new-privileges --read-only \
-  --tmpfs /tmp:rw,noexec,nosuid,size=64m --tmpfs /var/run/postgresql:rw,noexec,nosuid,size=16m \
+  --tmpfs /tmp:rw,noexec,nosuid,size=64m --tmpfs /var/run/postgresql:rw,noexec,nosuid,size=16m,uid=70,gid=70,mode=3775 \
   --memory 512m --cpus 1.0 -v pgdata:/var/lib/postgresql/data \
   --mount type=bind,src="$PASSWORD_FILE",dst=/run/secrets/db_password,readonly \
   -e POSTGRES_DB=linkly -e POSTGRES_USER=linkly -e POSTGRES_PASSWORD_FILE=/run/secrets/db_password \
@@ -93,7 +93,7 @@ wait_healthy linkly-worker
 chmod 644 proxy/certs/tls.key
 docker run -d --name linkly-proxy --network dmz --user 101:101 --restart unless-stopped \
   --cap-drop ALL --security-opt no-new-privileges --read-only \
-  --tmpfs /tmp:rw,noexec,nosuid,size=32m --tmpfs /var/cache/nginx:rw,noexec,nosuid,size=32m --tmpfs /var/run:rw,noexec,nosuid,size=8m \
+  --tmpfs /tmp:rw,noexec,nosuid,size=32m --tmpfs /var/cache/nginx:rw,noexec,nosuid,size=32m,uid=101,gid=101,mode=0755 --tmpfs /var/run:rw,noexec,nosuid,size=8m,uid=101,gid=101,mode=0755 \
   --memory 128m --cpus 0.5 -p 80:8080 -p 443:8443 \
   --mount type=bind,src="$ROOT/proxy/certs/tls.crt",dst=/etc/nginx/certs/tls.crt,readonly \
   --mount type=bind,src="$ROOT/proxy/certs/tls.key",dst=/etc/nginx/certs/tls.key,readonly \
