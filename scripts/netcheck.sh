@@ -5,7 +5,7 @@ docker image inspect "$IMAGE" >/dev/null 2>&1 || docker pull "$IMAGE"
 failures=0
 check() {
   local source="$1" target="$2" host="$3" port="$4" expected="$5" actual
-  if docker run --rm --network "container:$source" "$IMAGE" sh -c "nc -zw3 '$host' '$port' >/dev/null 2>&1"; then actual=Allowed; else actual=Blocked; fi
+  if docker run --rm --network "container:$source" --cap-drop ALL --security-opt no-new-privileges --read-only --memory 32m --cpus 0.25 "$IMAGE" sh -c "nc -zw3 '$host' '$port' >/dev/null 2>&1"; then actual=Allowed; else actual=Blocked; fi
   printf '%-12s %-9s %-22s expected=%-8s actual=%-8s' "$source" "$target" "$host:$port" "$expected" "$actual"
   if [[ "$actual" == "$expected" ]]; then echo PASS; else echo FAIL; failures=$((failures+1)); fi
 }
@@ -26,7 +26,7 @@ check linkly-cache internet 1.1.1.1 443 Blocked
 check linkly-db api linkly-api 5000 Allowed
 check linkly-db cache linkly-cache 6379 Allowed
 check linkly-db internet 1.1.1.1 443 Blocked
-docker run -d --rm --name linkly-backup-netcheck --network admin "$IMAGE" sleep 60 >/dev/null
+docker run -d --rm --name linkly-backup-netcheck --network admin --user 65534:65534 --cap-drop ALL --security-opt no-new-privileges --read-only --memory 32m --cpus 0.25 "$IMAGE" sleep 60 >/dev/null
 check linkly-backup-netcheck db linkly-db 5432 Allowed
 check linkly-backup-netcheck api linkly-api 5000 Blocked
 check linkly-backup-netcheck cache linkly-cache 6379 Blocked
