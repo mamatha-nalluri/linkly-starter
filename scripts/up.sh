@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 PASSWORD_FILE="${DB_PASSWORD_FILE:-$ROOT/secrets/db_password}"
 GIT_SHA="${GIT_SHA:-$(git rev-parse --short=7 HEAD 2>/dev/null || echo dev)}"
+PROXY_IMAGE="nginxinc/nginx-unprivileged:1.27-alpine"
 : "${DOCKERHUB_USER:=}"
 : "${PUSH_IMAGES:=false}"
 command -v docker >/dev/null || { echo "Docker CLI is required" >&2; exit 1; }
@@ -15,7 +16,6 @@ chmod 444 "$PASSWORD_FILE"
 
 docker build -t "linkly-api:$GIT_SHA" ./api
 docker build -t "linkly-worker:$GIT_SHA" ./worker
-docker build -t "linkly-proxy:$GIT_SHA" ./proxy
 if [[ "$PUSH_IMAGES" == true ]]; then
   [[ -n "$DOCKERHUB_USER" ]] || { echo "Set DOCKERHUB_USER to push images" >&2; exit 1; }
   docker tag "linkly-api:$GIT_SHA" "$DOCKERHUB_USER/linkly-api:$GIT_SHA"
@@ -68,7 +68,7 @@ wait_healthy() {
 wait_healthy linkly-db
 wait_healthy linkly-cache
 
-docker run -d --name linkly-api --network dmz --user 10001:10001 --restart unless-stopped \
+docker run -d --name linkly-api --network dmz --network-alias api --user 10001:10001 --restart unless-stopped \
   --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --memory 256m --cpus 1.0 --mount type=bind,src="$PASSWORD_FILE",dst=/run/secrets/db_password,readonly \
   -e DB_HOST=linkly-db -e DB_NAME=linkly -e DB_USER=linkly -e DB_PASSWORD_FILE=/run/secrets/db_password \
@@ -95,10 +95,10 @@ docker run -d --name linkly-proxy --network dmz --user 101:101 --restart unless-
   --cap-drop ALL --security-opt no-new-privileges --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=32m --tmpfs /var/cache/nginx:rw,noexec,nosuid,size=32m,uid=101,gid=101,mode=0755 --tmpfs /var/run:rw,noexec,nosuid,size=8m,uid=101,gid=101,mode=0755 \
   --memory 128m --cpus 0.5 -p 80:8080 -p 443:8443 \
-  --mount type=bind,src="$ROOT/proxy/certs/tls.crt",dst=/etc/nginx/certs/tls.crt,readonly \
-  --mount type=bind,src="$ROOT/proxy/certs/tls.key",dst=/etc/nginx/certs/tls.key,readonly \
+  --mount type=bind,src="$ROOT/proxy/default.conf",dst=/etc/nginx/conf.d/default.conf,readonly \
+  --mount type=bind,src="$ROOT/proxy/certs",dst=/etc/nginx/certs,readonly \
   --health-cmd 'wget -q -O /dev/null http://127.0.0.1:8080/healthz' --health-interval 10s --health-timeout 3s --health-retries 3 \
-  "linkly-proxy:$GIT_SHA"
+  "$PROXY_IMAGE"
 wait_healthy linkly-proxy
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 echo "Stack started. Run scripts/netcheck.sh and capture real evidence."
