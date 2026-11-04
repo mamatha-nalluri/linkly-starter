@@ -35,9 +35,9 @@ docker volume create redisdata >/dev/null
 docker volume create reports >/dev/null
 
 # Initialize persistent volume ownership with a short-lived helper.
-docker run --rm --user 0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges -v pgdata:/v busybox:1.36 chown 70:70 /v
-docker run --rm --user 0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges -v redisdata:/v busybox:1.36 chown 999:999 /v
-docker run --rm --user 0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges -v reports:/v busybox:1.36 chown 10001:10001 /v
+docker run --rm --user 0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges --memory 32m --cpus 0.25 -v pgdata:/v busybox:1.36 chown 70:70 /v
+docker run --rm --user 0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges --memory 32m --cpus 0.25 -v redisdata:/v busybox:1.36 chown 999:999 /v
+docker run --rm --user 0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges --memory 32m --cpus 0.25 -v reports:/v busybox:1.36 chown 10001:10001 /v
 
 docker run -d --name linkly-db --network internal --network-alias db --user 70:70 --restart unless-stopped \
   --cap-drop ALL --security-opt no-new-privileges --read-only \
