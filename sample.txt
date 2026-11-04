@@ -1,0 +1,87 @@
+@mamatha-nalluri ➜ /workspaces/linkly-starter (main) $ docker ps
+CONTAINER ID   IMAGE                                     COMMAND                  CREATED          STATUS                    PORTS                                                                                NAMES
+593d6c12db03   postgres:16-alpine                        "docker-entrypoint.s…"   6 minutes ago    Up 6 minutes (healthy)    5432/tcp                                                                             linkly-db
+2f166b38c4fe   nginxinc/nginx-unprivileged:1.27-alpine   "/docker-entrypoint.…"   15 minutes ago   Up 15 minutes (healthy)   0.0.0.0:80->8080/tcp, [::]:80->8080/tcp, 0.0.0.0:443->8443/tcp, [::]:443->8443/tcp   linkly-proxy
+fcbd38d065f3   linkly-worker:3224aff                     "python worker.py"       15 minutes ago   Up 15 minutes (healthy)                                                                                        linkly-worker
+fdecba59c166   linkly-api:3224aff                        "gunicorn --bind 0.0…"   15 minutes ago   Up 15 minutes (healthy)   5000/tcp                                                                             linkly-api
+1caa9e57a391   redis:7.4-alpine                          "docker-entrypoint.s…"   15 minutes ago   Up 15 minutes (healthy)   6379/tcp                                                                             linkly-cache
+@mamatha-nalluri ➜ /workspaces/linkly-starter (main) $ docker ps -a
+CONTAINER ID   IMAGE                                     COMMAND                  CREATED          STATUS                    PORTS                                                                                NAMES
+593d6c12db03   postgres:16-alpine                        "docker-entrypoint.s…"   6 minutes ago    Up 6 minutes (healthy)    5432/tcp                                                                             linkly-db
+2f166b38c4fe   nginxinc/nginx-unprivileged:1.27-alpine   "/docker-entrypoint.…"   15 minutes ago   Up 15 minutes (healthy)   0.0.0.0:80->8080/tcp, [::]:80->8080/tcp, 0.0.0.0:443->8443/tcp, [::]:443->8443/tcp   linkly-proxy
+fcbd38d065f3   linkly-worker:3224aff                     "python worker.py"       15 minutes ago   Up 15 minutes (healthy)                                                                                        linkly-worker
+fdecba59c166   linkly-api:3224aff                        "gunicorn --bind 0.0…"   15 minutes ago   Up 15 minutes (healthy)   5000/tcp                                                                             linkly-api
+1caa9e57a391   redis:7.4-alpine                          "docker-entrypoint.s…"   15 minutes ago   Up 15 minutes (healthy)   6379/tcp                                                                             linkly-cache
+@mamatha-nalluri ➜ /workspaces/linkly-starter (main) $ docker images
+                                                                                            i Info →   U  In Use
+IMAGE                                     ID             DISK USAGE   CONTENT SIZE   EXTRA
+busybox:1.36                              73aaf090f3d8       6.76MB         2.21MB        
+linkly-api:3224aff                        64df2699c3e8        209MB           51MB    U   
+linkly-worker:3224aff                     a2b336f87b14        207MB         50.8MB    U   
+mamathanalluri/linkly-api:3224aff         a9695a493e21        209MB           51MB    U   
+mamathanalluri/linkly-worker:3224aff      6f0468a88bf5        207MB         50.8MB    U   
+nginxinc/nginx-unprivileged:1.27-alpine   65e3e85dbaed       73.7MB           21MB    U   
+postgres:16-alpine                        0cefaabd882e        420MB          117MB    U   
+redis:7.4-alpine                          8da19c7399dc       57.8MB         16.7MB    U   
+@mamatha-nalluri ➜ /workspaces/linkly-starter (main) $ curl -i http://localhost/healthz
+HTTP/1.1 200 OK
+Server: nginx/1.27.5
+Date: Wed, 04 Nov 2026 10:04:37 GMT
+Content-Type: application/octet-stream
+Content-Length: 3
+Connection: keep-alive
+
+ok
+@mamatha-nalluri ➜ /workspaces/linkly-starter (test/branch-execution) $ curl -k -i https://localhost/health
+HTTP/1.1 200 OK
+Server: nginx/1.27.5
+Date: Wed, 04 Nov 2026 10:04:54 GMT
+Content-Type: application/json
+Content-Length: 36
+Connection: keep-alive
+
+{"status":{"cache":"ok","db":"ok"}}
+@mamatha-nalluri ➜ /workspaces/linkly-starter (test/branch-execution) $ curl -k -i -X POST https://localhost/links \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://en.wikipedia.org/wiki/Main_Page"}'
+HTTP/1.1 201 CREATED
+Server: nginx/1.27.5
+Date: Wed, 04 Nov 2026 10:06:07 GMT
+Content-Type: application/json
+Content-Length: 66
+Connection: keep-alive
+
+{"code":"axGOfw","url":"https://en.wikipedia.org/wiki/Main_Page"}
+@mamatha-nalluri ➜ /workspaces/linkly-starter (test/branch-execution) $ curl -k -i https://localhost/axGOfw
+HTTP/1.1 302 FOUND
+Server: nginx/1.27.5
+Date: Wed, 04 Nov 2026 10:06:55 GMT
+Content-Type: text/html; charset=utf-8
+Content-Length: 265
+Connection: keep-alive
+Location: https://en.wikipedia.org/wiki/Main_Page
+
+<!doctype html>
+<html lang=en>
+<title>Redirecting...</title>
+<h1>Redirecting...</h1>
+<p>You should be redirected automatically to the target URL: <a href="https://en.wikipedia.org/wiki/Main_Page">https://en.wikipedia.org/wiki/Main_Page</a>. If not, click the link.
+@mamatha-nalluri ➜ /workspaces/linkly-starter (test/branch-execution) $ curl -k -i https://localhost/stats/axGOfw
+HTTP/1.1 200 OK
+Server: nginx/1.27.5
+Date: Wed, 04 Nov 2026 10:07:33 GMT
+Content-Type: application/json
+Content-Length: 29
+Connection: keep-alive
+
+{"clicks":1,"code":"axGOfw"}
+@mamatha-nalluri ➜ /workspaces/linkly-starter (test/branch-execution) $ curl -k https://localhost/stats/axGOfw
+{"clicks":1,"code":"axGOfw"}
+@mamatha-nalluri ➜ /workspaces/linkly-starter (test/branch-execution) $ docker exec linkly-db psql -U linkly -d linkly -c "SELECT * FROM links;"
+  code  |                   url                   |          created_at           
+--------+-----------------------------------------+-------------------------------
+ 7Wmrjd | https://www.google.com                  | 2026-11-04 09:44:49.56002+00
+ axGOfw | https://en.wikipedia.org/wiki/Main_Page | 2026-11-04 10:06:07.384211+00
+(2 rows)
+
+@mamatha-nalluri ➜ /workspaces/linkly-starter (test/branch-execution) $ 
