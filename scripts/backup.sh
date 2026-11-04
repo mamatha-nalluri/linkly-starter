@@ -8,7 +8,7 @@ mkdir -p backups && chmod 700 backups
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 out="$ROOT/backups/linkly-$stamp.sql.gz"
 docker run --rm --network admin --cap-drop ALL --security-opt no-new-privileges --read-only \
-  --tmpfs /tmp:rw,noexec,nosuid,size=32m --memory 256m --cpus 0.5 \
+  --tmpfs /tmp:rw,noexec,nosuid,size=32m --tmpfs /run/secrets:rw,noexec,nosuid,size=1m --memory 256m --cpus 0.5 \
   --user "$(id -u):$(id -g)" --mount type=bind,src="$PASSWORD_FILE",dst=/run/secrets/db_password,readonly \
   --mount type=bind,src="$ROOT/backups",dst=/backups \
   --entrypoint sh postgres:16-alpine -ec \
