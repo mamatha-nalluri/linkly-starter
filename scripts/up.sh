@@ -10,7 +10,8 @@ GIT_SHA="${GIT_SHA:-$(git rev-parse --short=7 HEAD 2>/dev/null || echo dev)}"
 command -v docker >/dev/null || { echo "Docker CLI is required" >&2; exit 1; }
 [[ -s "$PASSWORD_FILE" ]] || { echo "Create secrets/db_password first (see README)" >&2; exit 1; }
 [[ -s proxy/certs/tls.crt && -s proxy/certs/tls.key ]] || ./proxy/gen-cert.sh
-chmod 600 "$PASSWORD_FILE"
+# The secrets directory is private (0700); this file must be readable by the non-root container UIDs.
+chmod 444 "$PASSWORD_FILE"
 
 docker build -t "linkly-api:$GIT_SHA" ./api
 docker build -t "linkly-worker:$GIT_SHA" ./worker
