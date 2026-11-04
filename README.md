@@ -71,10 +71,11 @@ Use a Linux Docker host/VM with Docker Engine, Bash, Git and OpenSSL. The stack 
 
 ```bash
 chmod +x scripts/*.sh proxy/gen-cert.sh
-mkdir -p secrets
 umask 077
+mkdir -p secrets
+chmod 700 secrets
 openssl rand -hex 24 > secrets/db_password
-chmod 600 secrets/db_password
+chmod 444 secrets/db_password
 ./proxy/gen-cert.sh
 bash scripts/up.sh
 ```
