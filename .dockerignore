@@ -8,4 +8,4 @@ venv
 secrets
 backups
 proxy/certs
-docs/evidence
+docs/*
