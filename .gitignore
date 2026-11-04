@@ -1,6 +1,9 @@
 secrets/
 proxy/certs/
 backups/
+docs/evidence/*.log
+docs/evidence/*.txt
+docs/evidence/*.json
 __pycache__/
 *.pyc
 .venv/
