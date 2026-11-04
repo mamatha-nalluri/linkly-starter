@@ -79,7 +79,7 @@ chmod 600 secrets/db_password
 bash scripts/up.sh
 ```
 
-The password and self-signed TLS key are local-only. `secrets/`, `proxy/certs/`, and generated backups are gitignored. Never commit them.
+The password and self-signed TLS key are local-only. Keep `secrets/` private (mode 0700); the password file is mode 0444 so the non-root container UIDs can read its read-only mount. `secrets/`, `proxy/certs/`, and generated backups are gitignored. Never commit them.
 
 The startup script builds all three project images, creates the exact networks and volumes, initializes named-volume ownership, starts services in dependency order, waits for health and publishes only proxy ports. API and worker images are tagged with the short Git SHA. To push these two images to Docker Hub:
 
