@@ -82,7 +82,7 @@ bash scripts/up.sh
 
 The password and self-signed TLS key are local-only. Keep `secrets/` private (mode 0700); the password file is mode 0444 so the non-root container UIDs can read its read-only mount. `secrets/`, `proxy/certs/`, and generated backups are gitignored. Never commit them.
 
-The startup script builds all three project images, creates the exact networks and volumes, initializes named-volume ownership, starts services in dependency order, waits for health and publishes only proxy ports. API and worker images are tagged with the short Git SHA. To push these two images to Docker Hub:
+The startup script builds the API and worker images, then runs the official `nginxinc/nginx-unprivileged:1.27-alpine` image directly for the proxy. It creates the exact networks and volumes, initializes named-volume ownership, starts services in dependency order, waits for health and publishes only proxy ports. API and worker images are tagged with the short Git SHA. To push these two images to Docker Hub:
 
 ```bash
 docker login
@@ -175,7 +175,7 @@ The backup job uses a temporary PostgreSQL client on admin only and writes a tim
 - Containers drop all capabilities, enable `no-new-privileges`, use read-only root filesystems and bounded tmpfs mounts.
 - CPU and memory limits are configured for long-running services and one-shot jobs.
 - Database password is mounted read-only at `/run/secrets/db_password` and passed through `DB_PASSWORD_FILE` / `POSTGRES_PASSWORD_FILE`; it is not embedded in image layers or container environment values.
-- The self-signed development TLS key is made readable by the unprivileged Nginx UID for the bind mount. Keep `proxy/certs/` private and never commit the key; use a proper certificate/secret-management mechanism in production.
+- The self-signed development TLS key is made readable by the unprivileged Nginx UID before the read-only certificate-directory mount. Keep `proxy/certs/` private and never commit the key; use a proper certificate/secret-management mechanism in production.
 - Every long-running service has a health check; startup waits for dependencies.
 - No privileged containers, host networking or Docker socket mounts.
 - Redis AOF and PostgreSQL data use named volumes.
@@ -224,7 +224,7 @@ The evidence directory contains capture instructions. The capstone requires genu
 ├── README.md
 ├── api/                 # original app + Dockerfile
 ├── worker/              # original worker + Dockerfile
-├── proxy/               # unprivileged nginx config + TLS generator
+├── proxy/               # nginx config + TLS generator (official image; no custom Dockerfile)
 ├── scripts/             # up, down, backup and netcheck
 └── docs/
     ├── incidents/       # six incident reports
