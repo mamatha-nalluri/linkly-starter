@@ -67,7 +67,7 @@ Never use `:latest`.
 
 ## Prerequisites and setup
 
-Use a Linux Docker host/VM with Docker Engine, Bash, Git and OpenSSL. The stack binds host ports 80 and 443; ensure they are available.
+Use a Linux Docker host/VM with Docker Engine, Bash, Git and OpenSSL. Docker Desktop on macOS is suitable because it runs Docker Engine in a Linux VM. The stack binds host ports 80 and 443; ensure they are available.
 
 ```bash
 chmod +x scripts/*.sh proxy/gen-cert.sh
@@ -135,6 +135,7 @@ The backup job uses a temporary PostgreSQL client on admin only and writes a tim
 - Containers drop all capabilities, enable `no-new-privileges`, use read-only root filesystems and bounded tmpfs mounts.
 - CPU and memory limits are configured for long-running services and one-shot jobs.
 - Database password is mounted read-only at `/run/secrets/db_password` and passed through `DB_PASSWORD_FILE` / `POSTGRES_PASSWORD_FILE`; it is not embedded in image layers or container environment values.
+- The self-signed development TLS key is made readable by the unprivileged Nginx UID for the bind mount. Keep `proxy/certs/` private and never commit the key; use a proper certificate/secret-management mechanism in production.
 - Every long-running service has a health check; startup waits for dependencies.
 - No privileged containers, host networking or Docker socket mounts.
 - Redis AOF and PostgreSQL data use named volumes.
