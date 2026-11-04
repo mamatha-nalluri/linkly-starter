@@ -91,6 +91,46 @@ DOCKERHUB_USER=YOUR_DOCKERHUB_USERNAME PUSH_IMAGES=true bash scripts/up.sh
 
 Replace the placeholder with your Docker Hub username. The script pushes `linkly-api:<short-sha>` and `linkly-worker:<short-sha>` to your public Docker Hub repositories. Add the real image URLs after a successful push.
 
+## Application endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/health` | API, PostgreSQL and Redis health |
+| POST | `/links` | Create a short link; JSON body: `{"url":"https://example.com"}` |
+| GET | `/<code>` | Redirect to the original URL and enqueue a click |
+| GET | `/stats/<code>` | Read the click count persisted by the worker |
+| GET | `/slow?seconds=5` | Starter diagnostic delay endpoint |
+| GET | `/healthz` | Nginx liveness endpoint (HTTP listener) |
+
+## Runtime environment variables
+
+The scripts set these values explicitly; the application source remains unchanged.
+
+| Service | Variable | Value / meaning |
+|---|---|---|
+| API | `DB_HOST` | `linkly-db` |
+| API | `DB_NAME` | `linkly` |
+| API | `DB_USER` | `linkly` |
+| API | `DB_PASSWORD_FILE` | `/run/secrets/db_password` |
+| API | `REDIS_HOST` | `linkly-cache` |
+| API | `LOG_FILE` | `-` (stdout; compatible with read-only root filesystem) |
+| API | `LOG_FORMAT` | `json` |
+| Worker | `DB_HOST`, `DB_NAME`, `DB_USER` | `linkly-db`, `linkly`, `linkly` |
+| Worker | `DB_PASSWORD_FILE` | `/run/secrets/db_password` |
+| Worker | `REDIS_HOST` | `linkly-cache` |
+| Worker | `REPORT_DIR` | `/app/reports` |
+| Worker | `REPORT_INTERVAL` | `86400` seconds |
+| Worker | `WEBHOOK_URL` | Empty to honor the worker's required blocked-Internet policy |
+| Worker | `HEARTBEAT_FILE` | `/tmp/worker-heartbeat` |
+| PostgreSQL | `POSTGRES_DB`, `POSTGRES_USER` | `linkly`, `linkly` |
+| PostgreSQL | `POSTGRES_PASSWORD_FILE` | `/run/secrets/db_password` |
+
+The code also supports fallback `DB_PASSWORD` variables, but this deployment deliberately does not set them. The password is supplied only through the read-only file mount. Redis and Nginx require no custom environment variables in this stack.
+
+## Laptop / Docker Desktop run notes
+
+On a MacBook, start Docker Desktop and run the setup commands from the repository root in Terminal. The Docker Engine runs in Docker Desktop's Linux VM. The proxy is reachable from the Mac at `http://localhost/healthz` and `https://localhost/`; local HTTPS uses the generated self-signed certificate. The host ports are 80 and 443 (not 8080 and 8443), matching the capstone requirement. No Compose command is required.
+
 ## Test the application
 
 ```bash
